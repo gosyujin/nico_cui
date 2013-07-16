@@ -1,9 +1,51 @@
+# -*-coding: utf-8 -*-
 require "nico_cui/version"
 require "mechanize"
 require "pit"
 require "net/http"
+require "zlib"
 require "uri"
 require "pp"
+
+class Mechanize
+  def post_data(uri, data, query = {}, headers = {})
+    return request_with_entity(:post, uri, query, headers) if String === query
+
+    node = {}
+    # Create a fake form
+    class << node
+      def search(*args); []; end
+    end
+    node['method'] = 'POST'
+    #node['enctype'] = 'application/x-www-form-urlencoded'
+    node['enctype'] = 'text/xml'
+
+    form = Form.new(node)
+
+    query.each { |k, v|
+      if v.is_a?(IO)
+        form.enctype = 'multipart/form-data'
+        ul = Form::FileUpload.new({'name' => k.to_s},::File.basename(v.path))
+        ul.file_data = v.read
+        form.file_uploads << ul
+      else
+        form.fields << Form::Field.new({'name' => k.to_s},v)
+      end
+    }
+
+    cur_page = form.page || current_page || Page.new
+    request_data = data
+    log.debug("query: #{ request_data.inspect }") if log
+    headers = {
+      'Content-Type'    => form.enctype,
+      'Content-Length'  => request_data.size.to_s,
+    }.merge headers
+    # fetch the page
+    page = @agent.fetch uri, :post, headers, [request_data], cur_page
+    add_to_history(page)
+    page
+  end
+end
 
 module NicoCui
   extend self
@@ -42,7 +84,6 @@ module NicoCui
         dl_cores << dl
       end
     end
-    #pp dl_cores
 
     puts "INFO: get description, tags and comments"
 # get description and tags
@@ -77,32 +118,56 @@ module NicoCui
         next
       end
       video_server = URI.decode(params["url"])
+      minutes = (params["l"].to_i / 60 ) + 1
 
       res = agent.get("http://flapi.nicovideo.jp/api/getthreadkey?thread=#{thread_id}")
-      thread_key = res.body
+      res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
+
+      thread_key = params["threadkey"]
+      force_184 = params["force_184"]
 
       xml = <<-EOH
-        <thread
-          thread=#{thread_id}
-          version="20061206"
-          res_from="-1000"
-          user_id=#{user_id}
-          #{thread_key}
-          force_184="1"
-        />
+<packet>
+  <thread
+    thread="#{thread_id}"
+    version="20090904"
+    user_id="#{user_id}"
+    threadkey="#{thread_key}"
+    force_184="#{force_184}"
+    res_from="-1000"
+    scores="1"
+    with_global="1" />
+  <thread_leaves
+    thread="#{thread_id}"
+    user_id="#{user_id}"
+    threadkey="#{thread_key}"
+    force_184="#{force_184}"
+    scores="1">
+      0-#{minutes}:100,1000
+  </thread_leaves>
+</packet>
       EOH
 
-      # Mechanize cannot include request body?
-      #res = agent.post_data(message_server, xml)
-      #pp res
-      dl["comments"] = []
+      puts "INFO: target: #{dl["title"]}"
+      sleep(1)
+      puts "INFO: comment get"
+      agent.content_encoding_hooks << lambda{|httpagent, uri, response, body_io| response['content-encoding'] = nil }
+      res = agent.post_data("#{message_server}", xml)
+      # res: \x1F\x8B\.... => gzip
+      content = StringIO.open(res.body, "rb"){ |r| Zlib::GzipReader.wrap(r).read }
+      open("#{dl["title"]}.xml", "w") { |x| x.write(content) }
+      puts "INFO: comment complete"
 
 # download before fake watch
-      puts "INFO: download start: #{dl["title"]}"
+      puts "INFO: download start"
       dl["video_server"] = video_server
       agent.get(dl["url"])
       agent.download(dl["video_server"], "#{dl["title"]}.mp4")
       puts "INFO: download complete"
+
+      puts "INFO: write title, tags, description"
+      open("#{dl["title"]}.html", "w") { |x| x.write(dl) }
+      puts "INFO: write complete"
     end
   end
 end
