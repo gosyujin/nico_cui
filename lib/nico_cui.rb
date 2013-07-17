@@ -64,10 +64,25 @@ module NicoCui
   Ignore_Title = "\r\n\t\t\t\t\t\t\t\t"
 
   def gets
+    FileUtils.mkdir_p(Config["path"])
+    @exist_files = []
+    Dir.glob("#{Config["path"]}/*").each do |file|
+      @exist_files << File::basename(file, ".*")
+    end
+    @exist_files.uniq!
+
     login
     dl_cores = open_mypage
+
     puts "INFO: get description, tags"
     dl_cores.each do |dl|
+      sleep(1)
+
+      if @exist_files.include?(dl["title"]) then
+        puts "SKIP: already exist? #{dl["title"]}"
+        next
+      end
+
       dl = get_videoinfo(dl)
       download(dl)
     end
@@ -87,6 +102,7 @@ module NicoCui
 
   def open_mypage
     puts "INFO: open my page..."
+
     my_list = @agent.page.link_with(:href => /\/my\/top/).click
 
     puts "INFO: search link '#{Dl_Url_Reg}' in my page"
@@ -101,7 +117,7 @@ module NicoCui
         next if dl["title"]        == Ignore_Title
         next if dl["number"].include? Ignore_Number
         dl_cores << dl
-        print "\r#{dl_cores.size} videos"
+        print "\rINFO: #{dl_cores.size} videos"
       end
     end
     print "\n"
@@ -130,73 +146,70 @@ module NicoCui
   end
 
   def download(dl)
-      res = @agent.get("#{Comment_Url}/#{dl["number"]}")
-      params = {}
-      res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
+    puts "INFO: download target: #{dl["title"]}"
 
-      thread_id      = params["thread_id"]
-      user_id        = params["user_id"]
-      message_server = URI.decode(params["ms"])
-      video_server   = URI.decode(params["url"])
-      minutes        = (params["l"].to_i / 60 ) + 1
+    res = @agent.get("#{Comment_Url}/#{dl["number"]}")
+    params = {}
+    res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
 
-      if params["url"].nil? then
-        puts "SKIP: url not found: #{thread_id} #{dl["title"]}"
-        false
-      end
+    thread_id      = params["thread_id"]
+    user_id        = params["user_id"]
+    message_server = URI.decode(params["ms"])
+    minutes        = (params["l"].to_i / 60 ) + 1
+    if params["url"].nil? then
+      puts "SKIP: url not found: #{thread_id} #{dl["title"]}"
+      return
+    end
+    video_server   = URI.decode(params["url"])
 
-      res = @agent.get("#{Thread_Id_Url}?thread=#{thread_id}")
-      res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
+    res = @agent.get("#{Thread_Id_Url}?thread=#{thread_id}")
+    res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
 
-      thread_key = params["threadkey"]
-      force_184  = params["force_184"]
+    thread_key     = params["threadkey"]
+    force_184      = params["force_184"]
 
-      xml = <<-EOH
-<packet>
-  <thread
-    thread="#{thread_id}"
-    version="20090904"
-    user_id="#{user_id}"
-    threadkey="#{thread_key}"
-    force_184="#{force_184}"
-    res_from="-1000"
-    scores="1"
-    with_global="1" />
-  <thread_leaves
-    thread="#{thread_id}"
-    user_id="#{user_id}"
-    threadkey="#{thread_key}"
-    force_184="#{force_184}"
-    scores="1">
-      0-#{minutes}:100,1000
-  </thread_leaves>
-</packet>
-      EOH
+    xml = <<-EOH
+      <packet>
+        <thread thread="#{thread_id}" user_id="#{user_id}"
+          threadkey="#{thread_key}" force_184="#{force_184}"
+          scores="1" version="20090904" res_from="-1000"
+          with_global="1">
+        </thread>
+        <thread_leaves thread="#{thread_id}" user_id="#{user_id}"
+          threadkey="#{thread_key}" force_184="#{force_184}"
+          scores="1">
+            0-#{minutes}:100,1000
+        </thread_leaves>
+      </packet>
+    EOH
 
-      puts "INFO: target: #{dl["title"]}"
-      sleep(1)
+    begin
       puts "INFO: comment get"
-      @agent.content_encoding_hooks << lambda{|httpagent, uri, response, body_io| response['content-encoding'] = nil }
-      res = @agent.post_data("#{message_server}", xml)
-      # res: \x1F\x8B\.... => gzip
-      content = StringIO.open(res.body, "rb"){ |r| Zlib::GzipReader.wrap(r).read }
-      open("#{dl["title"]}.xml", "w") { |x| x.write(content) }
-      puts "INFO: comment complete"
-  end
+      @agent.content_encoding_hooks << lambda do |httpagent, uri, response, body_io|
+        response['content-encoding'] = nil
+      end
+      res = @agent.post_data(message_server, xml)
+    rescue Net::HTTP::Persistent::Error => ex
+      puts "ERROR: #{ex}"
+      puts "INFO: retry"
+      sleep(1)
+      retry
+    end
 
-=begin
-  def download(dl)
-      puts "INFO: download start"
-      dl["video_server"] = video_server
-      @agent.get(dl["url"])
-      @agent.download(dl["video_server"], "#{dl["title"]}.mp4")
-      puts "INFO: download complete"
+    # res.body: \x1F\x8B\.... => gzip
+    content = StringIO.open(res.body, "rb") { |r| Zlib::GzipReader.wrap(r).read }
+    open("#{Config["path"]}/#{dl["title"]}.xml", "w") { |x| x.write(content) }
+    puts "INFO: comment complete"
 
-      puts "INFO: write title, tags, description"
-      open("#{dl["title"]}.html", "w") { |x| x.write(dl) }
-      puts "INFO: write complete"
+    puts "INFO: download start"
+    @agent.get(dl["url"])
+    @agent.download(video_server, "#{Config["path"]}/#{dl["title"]}.mp4")
+    puts "INFO: download complete"
+
+    puts "INFO: write title, tags, description"
+    open("#{Config["path"]}/#{dl["title"]}.html", "w") { |x| x.write(dl) }
+    puts "INFO: write complete"
   end
-=end
 end
 
 NicoCui::gets
