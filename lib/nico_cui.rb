@@ -49,82 +49,107 @@ end
 
 module NicoCui
   extend self
-  Login_Url = "https://secure.nicovideo.jp/secure/login_form"
-  Dl_Url_Reg = "http://www.nicovideo.jp/watch/"
+  Login_Url     = "https://secure.nicovideo.jp/secure/login_form"
+  Videoinfo_Url = "http://ext.nicovideo.jp/api/getthumbinfo"
+  Comment_Url   = "http://flapi.nicovideo.jp/api/getflv"
+  Thread_Id_Url = "http://flapi.nicovideo.jp/api/getthreadkey"
 
+  Config = YAML.load_file("_config.yml")
+  #require 'pp' ; pp Config
+  Core = Pit.get(Config["pit_id"])
+
+  Dl_Url_Reg = "http://www.nicovideo.jp/watch/"
   # not smXXXXXXX
   Ignore_Number = "sm"
   Ignore_Title = "\r\n\t\t\t\t\t\t\t\t"
 
-  Core = Pit.get("nico")
-
   def gets
+    login
+    dl_cores = open_mypage
+    puts "INFO: get description, tags"
+    dl_cores.each do |dl|
+      dl = get_videoinfo(dl)
+      download(dl)
+    end
+  end
+
+  # return: login page's title
+  def login
     puts "INFO: open login page..."
-    agent = Mechanize.new
-    login_page = agent.get(Login_Url)
+
+    @agent = Mechanize.new
+    login_page = @agent.get(Login_Url)
     login_form = login_page.forms.first
     login_form["mail_tel"] = Core["id"]
     login_form["password"] = Core["password"]
-    agent.submit(login_form)
+    @agent.submit(login_form).title
+  end
 
-# mylist page
+  def open_mypage
     puts "INFO: open my page..."
-    my_list = agent.page.link_with(:href => /\/my\/top/).click
+    my_list = @agent.page.link_with(:href => /\/my\/top/).click
 
+    puts "INFO: search link '#{Dl_Url_Reg}' in my page"
     dl_cores = []
     my_list.links.each do |link|
       url = link.node.values[0]
       if url.match(/#{Dl_Url_Reg}/) then
         dl = {}
-        dl["title"] = link.node.children.text
-        dl["url"] = url
+        dl["title"]  = link.node.children.text
+        dl["url"]    = url
         dl["number"] = $'
-        next if dl["title"] == Ignore_Title
+        next if dl["title"]        == Ignore_Title
         next if dl["number"].include? Ignore_Number
         dl_cores << dl
+        print "\r#{dl_cores.size} videos"
       end
     end
+    print "\n"
 
-    puts "INFO: get description, tags and comments"
-# get description and tags
-    dl_cores.each do |dl|
-      res = agent.get("http://ext.nicovideo.jp/api/getthumbinfo/#{dl["number"]}")
-      res.xml.children.children.children.each do |child|
-        case child.name
-        when "description"
-          dl["description"] = child.content
-        when "tags"
-          tags = []
-          child.children.each do |c|
-            case c.name
-            when "tag"
-              tags << c.content
-            end
+    dl_cores
+  end
+
+  def get_videoinfo(dl)
+    res = @agent.get("#{Videoinfo_Url}/#{dl["number"]}")
+    res.xml.children.children.children.each do |child|
+      case child.name
+      when "description"
+        dl["description"] = child.content
+      when "tags"
+        tags = []
+        child.children.each do |c|
+          case c.name
+          when "tag"
+            tags << c.content
           end
-          dl["tags"] = tags
         end
+        dl["tags"] = tags
       end
+    end
+    dl
+  end
 
-# get message server
-      res = agent.get("http://flapi.nicovideo.jp/api/getflv/#{dl["number"]}")
+  def download(dl)
+      res = @agent.get("#{Comment_Url}/#{dl["number"]}")
       params = {}
       res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
 
-      thread_id = params["thread_id"]
-      user_id = params["user_id"]
+      thread_id      = params["thread_id"]
+      user_id        = params["user_id"]
       message_server = URI.decode(params["ms"])
+      video_server   = URI.decode(params["url"])
+      minutes        = (params["l"].to_i / 60 ) + 1
+
       if params["url"].nil? then
         puts "SKIP: url not found: #{thread_id} #{dl["title"]}"
-        next
+        false
       end
-      video_server = URI.decode(params["url"])
-      minutes = (params["l"].to_i / 60 ) + 1
 
-      res = agent.get("http://flapi.nicovideo.jp/api/getthreadkey?thread=#{thread_id}")
+      res = @agent.get("#{Thread_Id_Url}?thread=#{thread_id}")
       res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
 
       thread_key = params["threadkey"]
-      force_184 = params["force_184"]
+      force_184  = params["force_184"]
 
       xml = <<-EOH
 <packet>
@@ -151,25 +176,27 @@ module NicoCui
       puts "INFO: target: #{dl["title"]}"
       sleep(1)
       puts "INFO: comment get"
-      agent.content_encoding_hooks << lambda{|httpagent, uri, response, body_io| response['content-encoding'] = nil }
-      res = agent.post_data("#{message_server}", xml)
+      @agent.content_encoding_hooks << lambda{|httpagent, uri, response, body_io| response['content-encoding'] = nil }
+      res = @agent.post_data("#{message_server}", xml)
       # res: \x1F\x8B\.... => gzip
       content = StringIO.open(res.body, "rb"){ |r| Zlib::GzipReader.wrap(r).read }
       open("#{dl["title"]}.xml", "w") { |x| x.write(content) }
       puts "INFO: comment complete"
+  end
 
-# download before fake watch
+=begin
+  def download(dl)
       puts "INFO: download start"
       dl["video_server"] = video_server
-      agent.get(dl["url"])
-      agent.download(dl["video_server"], "#{dl["title"]}.mp4")
+      @agent.get(dl["url"])
+      @agent.download(dl["video_server"], "#{dl["title"]}.mp4")
       puts "INFO: download complete"
 
       puts "INFO: write title, tags, description"
       open("#{dl["title"]}.html", "w") { |x| x.write(dl) }
       puts "INFO: write complete"
-    end
   end
+=end
 end
 
 NicoCui::gets
