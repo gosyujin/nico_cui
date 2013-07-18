@@ -157,13 +157,13 @@ module NicoCui
     minutes        = (params["l"].to_i / 60 ) + 1
 
     if params["ms"].nil? then
-      puts "SKIP: message_server not found: #{thread_id} #{dl["title"]}"
+      puts "WARN: SKIP: message_server not found: #{thread_id} #{dl["title"]}"
       return
     end
     message_server = URI.decode(params["ms"])
 
     if params["url"].nil? then
-      puts "SKIP: url not found: #{thread_id} #{dl["title"]}"
+      puts "WARN: SKIP: url not found: #{thread_id} #{dl["title"]}"
       return
     end
     video_server   = URI.decode(params["url"])
@@ -172,7 +172,7 @@ module NicoCui
     res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
 
     if params["threadkey"].nil? then
-      puts "SKIP: threadkey not found: #{thread_id} #{dl["title"]}"
+      puts "WARN: SKIP: threadkey not found: #{thread_id} #{dl["title"]}"
       return
     end
     thread_key     = params["threadkey"]
@@ -200,8 +200,8 @@ module NicoCui
       end
       res = @agent.post_data(message_server, xml)
     rescue Net::HTTP::Persistent::Error => ex
-      puts "ERROR: #{ex}"
-      puts "INFO: retry"
+      puts "WARN: #{ex}"
+      puts "WARN: retry"
       sleep(1)
       retry
     end
@@ -211,9 +211,9 @@ module NicoCui
       content = StringIO.open(res.body, "rb") { |r| Zlib::GzipReader.wrap(r).read }
       open("#{Config["path"]}/#{dl["title"]}.xml", "w") { |x| x.write(content) }
     rescue Zlib::GzipFile::Error => ex
-      puts "ERROR: #{ex}"
-      puts "INFO: res.body: #{res.body}"
-      puts "INFO: please download later"
+      puts "WARN: #{ex}"
+      puts "WARN: res.body: #{res.body}"
+      puts "WARN: please download later"
       return
     end
     puts "INFO: comment complete"
