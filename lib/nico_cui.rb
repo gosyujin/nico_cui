@@ -154,8 +154,14 @@ module NicoCui
 
     thread_id      = params["thread_id"]
     user_id        = params["user_id"]
-    message_server = URI.decode(params["ms"])
     minutes        = (params["l"].to_i / 60 ) + 1
+
+    if params["ms"].nil? then
+      puts "SKIP: message_server not found: #{thread_id} #{dl["title"]}"
+      return
+    end
+    message_server = URI.decode(params["ms"])
+
     if params["url"].nil? then
       puts "SKIP: url not found: #{thread_id} #{dl["title"]}"
       return
@@ -165,6 +171,10 @@ module NicoCui
     res = @agent.get("#{Thread_Id_Url}?thread=#{thread_id}")
     res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
 
+    if params["threadkey"].nil? then
+      puts "SKIP: threadkey not found: #{thread_id} #{dl["title"]}"
+      return
+    end
     thread_key     = params["threadkey"]
     force_184      = params["force_184"]
 
@@ -197,8 +207,15 @@ module NicoCui
     end
 
     # res.body: \x1F\x8B\.... => gzip
-    content = StringIO.open(res.body, "rb") { |r| Zlib::GzipReader.wrap(r).read }
-    open("#{Config["path"]}/#{dl["title"]}.xml", "w") { |x| x.write(content) }
+    begin
+      content = StringIO.open(res.body, "rb") { |r| Zlib::GzipReader.wrap(r).read }
+      open("#{Config["path"]}/#{dl["title"]}.xml", "w") { |x| x.write(content) }
+    rescue Zlib::GzipFile::Error => ex
+      puts "ERROR: #{ex}"
+      puts "INFO: res.body: #{res.body}"
+      puts "INFO: please download later"
+      return
+    end
     puts "INFO: comment complete"
 
     puts "INFO: download start"
