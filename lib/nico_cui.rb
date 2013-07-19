@@ -59,6 +59,7 @@ module NicoCui
   Core = Pit.get(Config["pit_id"])
 
   Dl_Url_Reg = "http://www.nicovideo.jp/watch/"
+  Gz_Magic_Num = ["1f8b"]
   # not smXXXXXXX
   Ignore_Number = "sm"
   Ignore_Title = "\r\n\t\t\t\t\t\t\t\t"
@@ -78,13 +79,9 @@ module NicoCui
     dl_cores.each do |dl|
       sleep(1)
 
-      if @exist_files.include?(dl["title"]) then
-        puts "SKIP: already exist? #{dl["title"]}"
-        next
-      end
-
       dl = get_videoinfo(dl)
       download(dl)
+      puts "================="
     end
   end
 
@@ -157,13 +154,13 @@ module NicoCui
     minutes        = (params["l"].to_i / 60 ) + 1
 
     if params["ms"].nil? then
-      puts "WARN: SKIP: message_server not found: #{thread_id} #{dl["title"]}"
+      puts "WARN: SKIP: message_server not found"
       return
     end
     message_server = URI.decode(params["ms"])
 
     if params["url"].nil? then
-      puts "WARN: SKIP: url not found: #{thread_id} #{dl["title"]}"
+      puts "WARN: SKIP: url not found (Pay video ?)"
       return
     end
     video_server   = URI.decode(params["url"])
@@ -172,7 +169,7 @@ module NicoCui
     res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
 
     if params["threadkey"].nil? then
-      puts "WARN: SKIP: threadkey not found: #{thread_id} #{dl["title"]}"
+      puts "WARN: SKIP: threadkey not found"
       return
     end
     thread_key     = params["threadkey"]
@@ -206,17 +203,28 @@ module NicoCui
       retry
     end
 
-    # res.body: \x1F\x8B\.... => gzip
     begin
-      content = StringIO.open(res.body, "rb") { |r| Zlib::GzipReader.wrap(r).read }
-      open("#{Config["path"]}/#{dl["title"]}.xml", "w") { |x| x.write(content) }
+      # res.body: \x1F\x8B\.... => gzip
+      if StringIO.open(res.body).read(2).unpack("H*") == Gz_Magic_Num then
+        puts "INFO: comment format: gzip"
+        content = StringIO.open(res.body, "rb") { |r| Zlib::GzipReader.wrap(r).read }
+        open("#{Config["path"]}/#{dl["title"]}.xml", "w") { |x| x.write(content) }
+      else
+        puts "INFO: comment format: xml"
+        content = res.body
+        open("#{Config["path"]}/#{dl["title"]}.xml", "w") { |x| x.write(content) }
+      end
     rescue Zlib::GzipFile::Error => ex
       puts "WARN: #{ex}"
       puts "WARN: res.body: #{res.body}"
-      puts "WARN: please download later"
       return
     end
     puts "INFO: comment complete"
+
+    if @exist_files.include?(dl["title"]) then
+      puts "SKIP: already exist"
+      return
+    end
 
     puts "INFO: download start"
     @agent.get(dl["url"])
