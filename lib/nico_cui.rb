@@ -5,7 +5,6 @@ require "pit"
 require "net/http"
 require "zlib"
 require "uri"
-require "pp"
 
 class Mechanize
   def post_data(uri, data, query = {}, headers = {})
@@ -55,28 +54,35 @@ module NicoCui
   Thread_Id_Url = "http://flapi.nicovideo.jp/api/getthreadkey"
 
   Config = YAML.load_file("_config.yml")
-  #require 'pp' ; pp Config
   Core = Pit.get(Config["pit_id"])
 
   Dl_Url_Reg = "http://www.nicovideo.jp/watch/"
+  Past_Nico_Report = "next-page-link"
   Gz_Magic_Num = ["1f8b"]
   # not smXXXXXXX
   Ignore_Number = "sm"
   Ignore_Title = "\r\n\t\t\t\t\t\t\t\t"
 
+  @exist_files = []
+  @dl_cores = []
+
   def gets
     FileUtils.mkdir_p(Config["path"])
-    @exist_files = []
     Dir.glob("#{Config["path"]}/*").each do |file|
       @exist_files << File::basename(file, ".*")
     end
     @exist_files.uniq!
 
+    puts "INFO: open login page..."
     login
-    dl_cores = open_mypage
+
+    puts "INFO: open my page..."
+    puts "INFO: search link '#{Dl_Url_Reg}' in my page"
+    my_list = @agent.page.link_with(:href => /\/my\/top/).click
+    check_mypage(my_list)
 
     puts "INFO: get description, tags"
-    dl_cores.each do |dl|
+    @dl_cores.each do |dl|
       sleep(1)
 
       dl = get_videoinfo(dl)
@@ -87,8 +93,6 @@ module NicoCui
 
   # return: login page's title
   def login
-    puts "INFO: open login page..."
-
     @agent = Mechanize.new
     login_page = @agent.get(Login_Url)
     login_form = login_page.forms.first
@@ -97,13 +101,7 @@ module NicoCui
     @agent.submit(login_form).title
   end
 
-  def open_mypage
-    puts "INFO: open my page..."
-
-    my_list = @agent.page.link_with(:href => /\/my\/top/).click
-
-    puts "INFO: search link '#{Dl_Url_Reg}' in my page"
-    dl_cores = []
+  def check_mypage(my_list)
     my_list.links.each do |link|
       url = link.node.values[0]
       if url.match(/#{Dl_Url_Reg}/) then
@@ -113,13 +111,17 @@ module NicoCui
         dl["number"] = $'
         next if dl["title"]        == Ignore_Title
         next if dl["number"].include? Ignore_Number
-        dl_cores << dl
-        print "\rINFO: #{dl_cores.size} videos"
+        @dl_cores << dl
+        print "\rINFO: #{@dl_cores.size} videos"
+      elsif url.match(/next-page-link/) then
+        puts "\nINFO: past nico report"
+        past_url = link.node.values[1]
+        check_mypage(@agent.get(past_url))
       end
     end
     print "\n"
 
-    dl_cores
+    @dl_cores
   end
 
   def get_videoinfo(dl)
