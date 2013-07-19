@@ -80,10 +80,11 @@ module NicoCui
     puts "INFO: search link '#{Dl_Url_Reg}' in my page"
     my_list = @agent.page.link_with(:href => /\/my\/top/).click
     check_mypage(my_list)
+    print "\n"
 
     puts "INFO: get description, tags"
     @dl_cores.each do |dl|
-      sleep(1)
+      sleep(10)
 
       dl = get_videoinfo(dl)
       download(dl)
@@ -114,12 +115,10 @@ module NicoCui
         @dl_cores << dl
         print "\rINFO: #{@dl_cores.size} videos"
       elsif url.match(/next-page-link/) then
-        puts "\nINFO: past nico report"
         past_url = link.node.values[1]
         check_mypage(@agent.get(past_url))
       end
     end
-    print "\n"
 
     @dl_cores
   end
@@ -157,6 +156,7 @@ module NicoCui
 
     if params["ms"].nil? then
       puts "WARN: SKIP: message_server not found"
+      sleep(10)
       return
     end
     message_server = URI.decode(params["ms"])
@@ -201,7 +201,7 @@ module NicoCui
     rescue Net::HTTP::Persistent::Error => ex
       puts "WARN: #{ex}"
       puts "WARN: retry"
-      sleep(1)
+      sleep(10)
       retry
     end
 
