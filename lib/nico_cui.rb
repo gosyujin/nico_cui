@@ -5,6 +5,7 @@ require "pit"
 require "net/http"
 require "zlib"
 require "uri"
+require "logger"
 
 class Mechanize
   def post_data(uri, data, query = {}, headers = {})
@@ -48,47 +49,54 @@ end
 
 module NicoCui
   extend self
-  Login_Url     = "https://secure.nicovideo.jp/secure/login_form"
-  Videoinfo_Url = "http://ext.nicovideo.jp/api/getthumbinfo"
-  Comment_Url   = "http://flapi.nicovideo.jp/api/getflv"
-  Thread_Id_Url = "http://flapi.nicovideo.jp/api/getthreadkey"
+  @l = Logger.new(STDOUT)
+  @l.datetime_format ="%Y-%m-%dT%H:%M:%S "
+  @l.level = Logger::INFO
 
-  Config = YAML.load_file("_config.yml")
-  Core = Pit.get(Config["pit_id"])
+  Login_Url        = "https://secure.nicovideo.jp/secure/login_form"
+  Videoinfo_Url    = "http://ext.nicovideo.jp/api/getthumbinfo"
+  Comment_Url      = "http://flapi.nicovideo.jp/api/getflv"
+  Thread_Id_Url    = "http://flapi.nicovideo.jp/api/getthreadkey"
 
-  Dl_Url_Reg = "http://www.nicovideo.jp/watch/"
+  Config           = YAML.load_file("_config.yml")
+  Core             = Pit.get(Config["pit_id"])
+  Dl_Path          = Config["path"]
+
+  Dl_Url_Reg       = "http://www.nicovideo.jp/watch/"
   Past_Nico_Report = "next-page-link"
-  Gz_Magic_Num = ["1f8b"]
-  # not smXXXXXXX
-  Ignore_Number = "sm"
-  Ignore_Title = "\r\n\t\t\t\t\t\t\t\t"
+  Gz_Magic_Num     = ["1f8b"]
+  # not download smXXXXXXX
+  Ignore_Number    = "sm"
+  Ignore_Title     = "\r\n\t\t\t\t\t\t\t\t"
 
   @exist_files = []
-  @dl_cores = []
+  @dl_cores    = []
 
   def gets
-    FileUtils.mkdir_p(Config["path"])
-    Dir.glob("#{Config["path"]}/*").each do |file|
+    FileUtils.mkdir_p(Dl_Path)
+    Dir.glob("#{Dl_Path}/*").each do |file|
       @exist_files << File::basename(file, ".*")
     end
     @exist_files.uniq!
 
-    puts "INFO: open login page..."
+    @l.info("open login page")
     login
 
-    puts "INFO: open my page..."
-    puts "INFO: search link '#{Dl_Url_Reg}' in my page"
+    @l.info("open my page")
+    @l.info{ "search link '#{Dl_Url_Reg}' in my page" }
     my_list = @agent.page.link_with(:href => /\/my\/top/).click
     check_mypage(my_list)
     print "\n"
 
-    puts "INFO: get description, tags"
+    @l.info("get description, tags")
+    @l.info("=================")
+    @l.debug { "@dl_cores: \n#{@dl_cores}" }
     @dl_cores.each do |dl|
       sleep(10)
 
       dl = get_videoinfo(dl)
       download(dl)
-      puts "================="
+      @l.info("=================")
     end
   end
 
@@ -113,7 +121,7 @@ module NicoCui
         next if dl["title"]        == Ignore_Title
         next if dl["number"].include? Ignore_Number
         @dl_cores << dl
-        print "\rINFO: #{@dl_cores.size} videos"
+        print "\r#{@dl_cores.size} videos"
       elsif url.match(/next-page-link/) then
         past_url = link.node.values[1]
         check_mypage(@agent.get(past_url))
@@ -144,38 +152,46 @@ module NicoCui
   end
 
   def download(dl)
-    puts "INFO: download target: #{dl["title"]}"
+    dl["title"] = dl["title"].gsub(/\//, "-")
+    @l.info{ "download target: #{dl["title"]}" }
 
     res = @agent.get("#{Comment_Url}/#{dl["number"]}")
     params = {}
     res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
+    @l.debug { "comment_url response: \n#{res.body}"}
 
     thread_id      = params["thread_id"]
     user_id        = params["user_id"]
     minutes        = (params["l"].to_i / 60 ) + 1
 
     if params["ms"].nil? then
-      puts "WARN: SKIP: message_server not found"
+      @l.warn("message_server not found")
       sleep(10)
       return
     end
     message_server = URI.decode(params["ms"])
 
     if params["url"].nil? then
-      puts "WARN: SKIP: url not found (Pay video ?)"
+      @l.warn("SKIP: url not found (Pay video ?)")
+      sleep(10)
       return
     end
     video_server   = URI.decode(params["url"])
 
     res = @agent.get("#{Thread_Id_Url}?thread=#{thread_id}")
     res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
+    @l.debug { "thread_id_url response: \n#{res.body}"}
 
     if params["threadkey"].nil? then
-      puts "WARN: SKIP: threadkey not found"
+      @l.warn("SKIP: threadkey not found (Too access ?)")
+      sleep(10)
       return
     end
     thread_key     = params["threadkey"]
     force_184      = params["force_184"]
+
+    @l.info("title, tags, description write")
+    write(dl, "#{dl["title"]}.html")
 
     xml = <<-EOH
       <packet>
@@ -191,16 +207,17 @@ module NicoCui
         </thread_leaves>
       </packet>
     EOH
+    @l.debug { "xml: \n#{xml}"}
 
+    @l.info("comment get")
     begin
-      puts "INFO: comment get"
       @agent.content_encoding_hooks << lambda do |httpagent, uri, response, body_io|
         response['content-encoding'] = nil
       end
       res = @agent.post_data(message_server, xml)
     rescue Net::HTTP::Persistent::Error => ex
-      puts "WARN: #{ex}"
-      puts "WARN: retry"
+      @l.error("\n#{ex}")
+      @l.error("retry")
       sleep(10)
       retry
     end
@@ -208,34 +225,35 @@ module NicoCui
     begin
       # res.body: \x1F\x8B\.... => gzip
       if StringIO.open(res.body).read(2).unpack("H*") == Gz_Magic_Num then
-        puts "INFO: comment format: gzip"
+        @l.debug("comment format: gzip")
         content = StringIO.open(res.body, "rb") { |r| Zlib::GzipReader.wrap(r).read }
-        open("#{Config["path"]}/#{dl["title"]}.xml", "w") { |x| x.write(content) }
       else
-        puts "INFO: comment format: xml"
+        @l.debug("comment format: xml")
         content = res.body
-        open("#{Config["path"]}/#{dl["title"]}.xml", "w") { |x| x.write(content) }
       end
+      write(content, "#{dl["title"]}.xml")
     rescue Zlib::GzipFile::Error => ex
-      puts "WARN: #{ex}"
-      puts "WARN: res.body: #{res.body}"
+      @l.error("\n#{ex}")
+      @l.debug("res.body: \n#{res.body}")
       return
     end
-    puts "INFO: comment complete"
 
+    @l.info("download start")
     if @exist_files.include?(dl["title"]) then
-      puts "SKIP: already exist"
+      @l.info("SKIP: video already exist")
       return
     end
 
-    puts "INFO: download start"
     @agent.get(dl["url"])
-    @agent.download(video_server, "#{Config["path"]}/#{dl["title"]}.mp4")
-    puts "INFO: download complete"
+    @agent.download(video_server, "#{Dl_Path}/#{dl["title"]}.mp4")
+    @l.info("success")
+  end
 
-    puts "INFO: write title, tags, description"
-    open("#{Config["path"]}/#{dl["title"]}.html", "w") { |x| x.write(dl) }
-    puts "INFO: write complete"
+private
+  def write(file, title, mode="w")
+    @l.info{ "#{title}" }
+    open("#{Dl_Path}/#{title}", mode) { |x| x.write(file) }
+    @l.info("seccess")
   end
 end
 
