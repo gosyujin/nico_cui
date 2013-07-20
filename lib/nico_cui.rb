@@ -89,14 +89,14 @@ module NicoCui
     print "\n"
 
     @l.info("get description, tags")
-    @l.info("=================")
+    @l.info("================================")
     @l.debug { "@dl_cores: \n#{@dl_cores}" }
     @dl_cores.each do |dl|
       sleep(10)
 
       dl = get_videoinfo(dl)
       download(dl)
-      @l.info("=================")
+      @l.info("================================")
     end
   end
 
@@ -155,40 +155,26 @@ module NicoCui
     dl["title"] = dl["title"].gsub(/\//, "-")
     @l.info{ "download target: #{dl["title"]}" }
 
-    res = @agent.get("#{Comment_Url}/#{dl["number"]}")
     params = {}
-    res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
-    @l.debug { "comment_url response: \n#{res.body}"}
+    comment_url = "#{Comment_Url}/#{dl["number"]}"
+    params = get_params(comment_url)
+    @l.debug { "comment_url : #{comment_url}"}
 
-    thread_id      = params["thread_id"]
-    user_id        = params["user_id"]
-    minutes        = (params["l"].to_i / 60 ) + 1
+    thread_id          = params["thread_id"]
+    user_id            = params["user_id"]
+    minutes            = (params["l"].to_i / 60 ) + 1
+    return if param_nil?(params, "ms", "Pay video?")
+    message_server     = URI.decode(params["ms"])
+    return if param_nil?(params, "url", "Pay video?")
+    video_server       = URI.decode(params["url"])
 
-    if params["ms"].nil? then
-      @l.warn("message_server not found")
-      sleep(10)
-      return
-    end
-    message_server = URI.decode(params["ms"])
+    thread_id_url = "#{Thread_Id_Url}?thread=#{thread_id}"
+    params.merge!(get_params(thread_id_url))
+    @l.debug { "thread_id_url : #{thread_id_url}"}
 
-    if params["url"].nil? then
-      @l.warn("SKIP: url not found (Pay video ?)")
-      sleep(10)
-      return
-    end
-    video_server   = URI.decode(params["url"])
-
-    res = @agent.get("#{Thread_Id_Url}?thread=#{thread_id}")
-    res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
-    @l.debug { "thread_id_url response: \n#{res.body}"}
-
-    if params["threadkey"].nil? then
-      @l.warn("SKIP: threadkey not found (Too access ?)")
-      sleep(10)
-      return
-    end
-    thread_key     = params["threadkey"]
-    force_184      = params["force_184"]
+    return if param_nil?(params, "threadkey", "Pay video?")
+    thread_key         = params["threadkey"]
+    force_184          = params["force_184"]
 
     @l.info("title, tags, description write")
     write(dl, "#{dl["title"]}.html")
@@ -246,7 +232,7 @@ module NicoCui
 
     @agent.get(dl["url"])
     @agent.download(video_server, "#{Dl_Path}/#{dl["title"]}.mp4")
-    @l.info("success")
+    @l.info("complete")
   end
 
 private
@@ -254,6 +240,24 @@ private
     @l.info{ "#{title}" }
     open("#{Dl_Path}/#{title}", mode) { |x| x.write(file) }
     @l.info("seccess")
+  end
+
+  def param_nil?(params, key, warn_message)
+    if params[key].nil? then
+      @l.warn("SKIP: #{key} not found (#{warn_message})")
+      sleep(10)
+      true
+    else
+      false
+    end
+  end
+
+  def get_params(url)
+    params = {}
+    res = @agent.get(url)
+    res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
+    @l.debug { "response: \n#{res.body}"}
+    params
   end
 end
 
