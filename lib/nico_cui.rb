@@ -53,38 +53,46 @@ module NicoCui
   @l.datetime_format ="%Y-%m-%dT%H:%M:%S "
   @l.level = Logger::INFO
 
-  Login_Url        = "https://secure.nicovideo.jp/secure/login_form"
-  Videoinfo_Url    = "http://ext.nicovideo.jp/api/getthumbinfo"
-  Comment_Url      = "http://flapi.nicovideo.jp/api/getflv"
-  Thread_Id_Url    = "http://flapi.nicovideo.jp/api/getthreadkey"
+  LOGIN_URL        = "https://secure.nicovideo.jp/secure/login_form"
+  VIDEOINFO_URL    = "http://ext.nicovideo.jp/api/getthumbinfo"
+  COMMENT_URL      = "http://flapi.nicovideo.jp/api/getflv"
+  THREAD_ID_URL    = "http://flapi.nicovideo.jp/api/getthreadkey"
 
-  Config           = YAML.load_file("_config.yml")
-  Core             = Pit.get(Config["pit_id"])
-  Dl_Path          = Config["path"]
+  CONFIG           = YAML.load_file("_config.yml")
+  CORE             = Pit.get(CONFIG["pit_id"])
+  DL_PATH          = CONFIG["path"]
 
-  Dl_Url_Reg       = "http://www.nicovideo.jp/watch/"
-  Past_Nico_Report = "next-page-link"
-  Gz_Magic_Num     = ["1f8b"]
+  DL_URL           = "http://www.nicovideo.jp/watch/"
+  MY_PAGE_TOP      = "/my/top"
+  PAST_NICO_REPORT = "next-page-link"
+  GZIP_MAGICNUM    = ["1f8b"]
+  LOGIN_FAILED     = "Log into Niconico"
+
   # not download smXXXXXXX
-  Ignore_Number    = "sm"
-  Ignore_Title     = "\r\n\t\t\t\t\t\t\t\t"
+  IGNORE_NUMBER    = "sm"
+  IGNORE_TITLE     = "\r\n\t\t\t\t\t\t\t\t"
 
   @exist_files = []
   @dl_cores    = []
 
   def gets
-    FileUtils.mkdir_p(Dl_Path)
-    Dir.glob("#{Dl_Path}/*").each do |file|
+    FileUtils.mkdir_p(DL_PATH)
+    Dir.glob("#{DL_PATH}/*").each do |file|
       @exist_files << File::basename(file, ".*")
     end
     @exist_files.uniq!
 
     @l.info("open login page")
     login
+    error_exit("login failed?(check mail and password)") if login.title == LOGIN_FAILED
 
     @l.info("open my page")
-    @l.info{ "search link '#{Dl_Url_Reg}' in my page" }
-    my_list = @agent.page.link_with(:href => /\/my\/top/).click
+    my_top_link = @agent.page.link_with(:href => /#{MY_PAGE_TOP}/)
+    error_exit("not found my page link: #{MY_PAGE_TOP}") if my_top_link.nil?
+    @l.info{ "search link '#{DL_URL}' in #{MY_PAGE_TOP}" }
+    my_list = my_top_link.click
+
+    @l.info("get video title and link from #{MY_PAGE_TOP}")
     check_mypage(my_list)
     print "\n"
 
@@ -103,36 +111,34 @@ module NicoCui
   # return: login page's title
   def login
     @agent = Mechanize.new
-    login_page = @agent.get(Login_Url)
+    login_page = @agent.get(LOGIN_URL)
     login_form = login_page.forms.first
-    login_form["mail_tel"] = Core["id"]
-    login_form["password"] = Core["password"]
-    @agent.submit(login_form).title
+    login_form["mail_tel"] = CORE["id"]
+    login_form["password"] = CORE["password"]
+    @agent.submit(login_form)
   end
 
   def check_mypage(my_list)
     my_list.links.each do |link|
       url = link.node.values[0]
-      if url.match(/#{Dl_Url_Reg}/) then
+      if url.match(/#{DL_URL}/) then
         dl = {}
         dl["title"]  = link.node.children.text
         dl["url"]    = url
         dl["number"] = $'
-        next if dl["title"]        == Ignore_Title
-        next if dl["number"].include? Ignore_Number
+        next if dl["title"]        == IGNORE_TITLE
+        next if dl["number"].include? IGNORE_NUMBER
         @dl_cores << dl
-        print "\r#{@dl_cores.size} videos"
-      elsif url.match(/next-page-link/) then
+        print "\r#{@dl_cores.size} videos: #{dl["title"]}"
+      elsif url.match(/#{PAST_NICO_REPORT}/) then
         past_url = link.node.values[1]
         check_mypage(@agent.get(past_url))
       end
     end
-
-    @dl_cores
   end
 
   def get_videoinfo(dl)
-    res = @agent.get("#{Videoinfo_Url}/#{dl["number"]}")
+    res = @agent.get("#{VIDEOINFO_URL}/#{dl["number"]}")
     res.xml.children.children.children.each do |child|
       case child.name
       when "description"
@@ -154,27 +160,27 @@ module NicoCui
   def download(dl)
     dl["title"] = dl["title"].gsub(/\//, "-")
     @l.info{ "download target: #{dl["title"]}" }
-
     params = {}
-    comment_url = "#{Comment_Url}/#{dl["number"]}"
+
+    comment_url = "#{COMMENT_URL}/#{dl["number"]}"
     params = get_params(comment_url)
     @l.debug { "comment_url : #{comment_url}"}
 
-    thread_id          = params["thread_id"]
-    user_id            = params["user_id"]
-    minutes            = (params["l"].to_i / 60 ) + 1
     return if param_nil?(params, "ms", "Pay video?")
-    message_server     = URI.decode(params["ms"])
     return if param_nil?(params, "url", "Pay video?")
-    video_server       = URI.decode(params["url"])
+    message_server = URI.decode(params["ms"])
+    video_server   = URI.decode(params["url"])
+    thread_id      = params["thread_id"]
+    user_id        = params["user_id"]
+    minutes        = (params["l"].to_i / 60 ) + 1
 
-    thread_id_url = "#{Thread_Id_Url}?thread=#{thread_id}"
+    thread_id_url = "#{THREAD_ID_URL}?thread=#{thread_id}"
     params.merge!(get_params(thread_id_url))
     @l.debug { "thread_id_url : #{thread_id_url}"}
 
     return if param_nil?(params, "threadkey", "Pay video?")
-    thread_key         = params["threadkey"]
-    force_184          = params["force_184"]
+    thread_key = params["threadkey"]
+    force_184  = params["force_184"]
 
     @l.info("title, tags, description write")
     write(dl, "#{dl["title"]}.html")
@@ -210,7 +216,7 @@ module NicoCui
 
     begin
       # res.body: \x1F\x8B\.... => gzip
-      if StringIO.open(res.body).read(2).unpack("H*") == Gz_Magic_Num then
+      if StringIO.open(res.body).read(2).unpack("H*") == GZIP_MAGICNUM then
         @l.debug("comment format: gzip")
         content = StringIO.open(res.body, "rb") { |r| Zlib::GzipReader.wrap(r).read }
       else
@@ -231,14 +237,14 @@ module NicoCui
     end
 
     @agent.get(dl["url"])
-    @agent.download(video_server, "#{Dl_Path}/#{dl["title"]}.mp4")
+    @agent.download(video_server, "#{DL_PATH}/#{dl["title"]}.mp4")
     @l.info("complete")
   end
 
 private
   def write(file, title, mode="w")
     @l.info{ "#{title}" }
-    open("#{Dl_Path}/#{title}", mode) { |x| x.write(file) }
+    open("#{DL_PATH}/#{title}", mode) { |x| x.write(file) }
     @l.info("seccess")
   end
 
@@ -258,6 +264,11 @@ private
     res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
     @l.debug { "response: \n#{res.body}"}
     params
+  end
+
+  def error_exit(message)
+    @l.error { "#{message} ... exit" }
+    exit 1
   end
 end
 
