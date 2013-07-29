@@ -174,6 +174,8 @@ module NicoCui
     user_id        = params["user_id"]
     minutes        = (params["l"].to_i / 60 ) + 1
 
+    sleep(10)
+
     thread_id_url = "#{THREAD_ID_URL}?thread=#{thread_id}"
     params.merge!(get_params(thread_id_url))
     @l.debug { "thread_id_url : #{thread_id_url}"}
