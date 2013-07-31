@@ -72,6 +72,7 @@ module NicoCui
   IGNORE_NUMBER    = "sm"
   IGNORE_TITLE     = "\r\n\t\t\t\t\t\t\t\t"
 
+  @agent = ""
   @exist_files = []
   @dl_cores    = []
 
@@ -83,8 +84,8 @@ module NicoCui
     @exist_files.uniq!
 
     @l.info("open login page")
-    login
-    error_exit("login failed?(check mail and password)") if login.title == LOGIN_FAILED
+    title = login
+    error_exit("login failed?(check mail and password)") if title == LOGIN_FAILED
 
     @l.info("open my page")
     my_top_link = @agent.page.link_with(:href => /#{MY_PAGE_TOP}/)
@@ -115,7 +116,8 @@ module NicoCui
     login_form = login_page.forms.first
     login_form["mail_tel"] = CORE["id"]
     login_form["password"] = CORE["password"]
-    @agent.submit(login_form)
+    page = @agent.submit(login_form)
+    page.title
   end
 
   def check_mypage(my_list)
@@ -166,15 +168,13 @@ module NicoCui
     params = get_params(comment_url)
     @l.debug { "comment_url : #{comment_url}"}
 
-    return if param_nil?(params, "ms", "Pay video?")
+    return if param_nil?(params, "ms", "Pay video? or deleted?")
     return if param_nil?(params, "url", "Pay video?")
     message_server = URI.decode(params["ms"])
     video_server   = URI.decode(params["url"])
     thread_id      = params["thread_id"]
     user_id        = params["user_id"]
     minutes        = (params["l"].to_i / 60 ) + 1
-
-    sleep(10)
 
     thread_id_url = "#{THREAD_ID_URL}?thread=#{thread_id}"
     params.merge!(get_params(thread_id_url))
@@ -266,6 +266,12 @@ private
     res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
     @l.debug { "response: \n#{res.body}"}
     params
+  rescue Net::HTTP::Persistent::Error => ex
+    @l.error("get_params")
+    @l.error("\n#{ex}")
+    @l.error("retry")
+    sleep(10)
+    retry
   end
 
   def error_exit(message)
