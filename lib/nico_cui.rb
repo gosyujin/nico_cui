@@ -131,7 +131,7 @@ module NicoCui
         next if dl["title"]        == IGNORE_TITLE
         next if dl["number"].include? IGNORE_NUMBER
         @dl_cores << dl
-        print "\r#{@dl_cores.size} videos: #{dl["title"]}"
+        print "\r#{@dl_cores.size} videos: #{dl["title"].bytesize}byte #{dl["title"]}"
       elsif url.match(/#{PAST_NICO_REPORT}/) then
         past_url = link.node.values[1]
         check_mypage(@agent.get(past_url))
@@ -161,6 +161,11 @@ module NicoCui
 
   def download(dl)
     dl["title"] = dl["title"].gsub(/\//, "-")
+    if dl["title"].bytesize >= 255 then
+      @l.warn{ "file name TOO LONG: #{dl["title"]}" }
+      dl["title"] = dl["title"][0, 50]
+      @l.info{ "and TRUNCATE      : #{dl["title"]}" }
+    end
     @l.info{ "download target: #{dl["title"]}" }
     params = {}
 
