@@ -1,8 +1,12 @@
 # NicoCui
 
-ニコ動のマイページに表示されるニコレポから公式放送の動画をぶっこぬくスクリプト。
+ニコ動のマイページに表示されるニコレポから公式放送の動画をパトロールするスクリプト。
 
 ## Installation
+
+```
+$ git clone https://github.com/gosyujin/nico_cui.git
+```
 
 ## Usage
 
@@ -15,7 +19,6 @@
 4  password: パスワード
 ```
 
-1. clone する
 1. bundle install する
 1. ruby lib/nico_cui.rb すると以下のファイルが `./download` に落ちてくる( `_config.yml` で変更可能)
   - 動画ファイル
