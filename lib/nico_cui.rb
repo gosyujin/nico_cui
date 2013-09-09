@@ -215,8 +215,8 @@ module NicoCui
       end
       res = @agent.post_data(message_server, xml)
     rescue Net::HTTP::Persistent::Error => ex
-      @l.error("\n#{ex}")
-      @l.error("retry")
+      @l.warn("\n#{ex}")
+      @l.warn("retry")
       sleep(10)
       retry
     end
@@ -252,7 +252,7 @@ private
   def write(file, title, mode="w")
     @l.info{ "#{title}" }
     open("#{DL_PATH}/#{title}", mode) { |x| x.write(file) }
-    @l.info("seccess")
+    @l.info("success")
   end
 
   def param_nil?(params, key, warn_message)
@@ -272,9 +272,9 @@ private
     @l.debug { "response: \n#{res.body}"}
     params
   rescue Net::HTTP::Persistent::Error => ex
-    @l.error("get_params")
-    @l.error("\n#{ex}")
-    @l.error("retry")
+    @l.warn("get_params")
+    @l.warn("\n#{ex}")
+    @l.warn("retry")
     sleep(10)
     retry
   end
