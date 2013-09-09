@@ -6,6 +6,7 @@ require "net/http"
 require "zlib"
 require "uri"
 require "logger"
+require "fileutils"
 
 class Mechanize
   def post_data(uri, data, query = {}, headers = {})
@@ -161,11 +162,17 @@ module NicoCui
 
   def download(dl)
     dl["title"] = dl["title"].gsub(/\//, "-")
-    if dl["title"].bytesize >= 255 then
-      @l.warn{ "file name TOO LONG: #{dl["title"]}" }
+
+    begin
+      # check file bytesize
+      FileUtils.touch("#{DL_PATH}/#{dl["title"]}.html")
+    rescue Errno::ENAMETOOLONG => ex
+      @l.warn{ "\n#{ex}" }
       dl["title"] = dl["title"][0, 50]
-      @l.info{ "and TRUNCATE      : #{dl["title"]}" }
+      @l.warn{ "and TRUNCATE: #{dl["title"]}" }
+      retry
     end
+
     @l.info{ "download target: #{dl["title"]}" }
     params = {}
 
