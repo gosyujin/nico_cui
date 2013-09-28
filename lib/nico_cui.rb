@@ -1,5 +1,6 @@
 # -*-coding: utf-8 -*-
 require "nico_cui/version"
+require "thor"
 require "mechanize"
 require "pit"
 require "net/http"
@@ -7,6 +8,7 @@ require "zlib"
 require "uri"
 require "logger"
 require "fileutils"
+require "pp"
 
 class Mechanize
   def post_data(uri, data, query = {}, headers = {})
@@ -49,247 +51,293 @@ class Mechanize
 end
 
 module NicoCui
-  extend self
-  @l = Logger.new(STDOUT)
-  @l.datetime_format ="%Y-%m-%dT%H:%M:%S "
-  @l.level = Logger::INFO
+  class CLI < Thor
+    class_option :help, aliases: "-h", type: :boolean, desc: "help"
 
-  LOGIN_URL        = "https://secure.nicovideo.jp/secure/login_form"
-  VIDEOINFO_URL    = "http://ext.nicovideo.jp/api/getthumbinfo"
-  COMMENT_URL      = "http://flapi.nicovideo.jp/api/getflv"
-  THREAD_ID_URL    = "http://flapi.nicovideo.jp/api/getthreadkey"
-
-  CONFIG           = YAML.load_file("_config.yml")
-  CORE             = Pit.get(CONFIG["pit_id"])
-  DL_PATH          = CONFIG["path"]
-
-  DL_URL           = "http://www.nicovideo.jp/watch/"
-  MY_PAGE_TOP      = "/my/top"
-  PAST_NICO_REPORT = "next-page-link"
-  GZIP_MAGICNUM    = ["1f8b"]
-  LOGIN_FAILED     = "Log into Niconico"
-
-  # not download smXXXXXXX
-  IGNORE_NUMBER    = "sm"
-  IGNORE_TITLE     = "\r\n\t\t\t\t\t\t\t\t"
-
-  @agent = ""
-  @exist_files = []
-  @dl_cores    = []
-
-  def gets
-    FileUtils.mkdir_p(DL_PATH)
-    Dir.glob("#{DL_PATH}/*").each do |file|
-      @exist_files << File::basename(file, ".*")
+    desc "download [-a] video_number",
+         "default"
+    method_option :all, aliases: "-a", type: :boolean, desc: "download mypage's(nico repo) all official videos"
+    def download(*urls)
+      if options[:all] then
+        Nico.new.get_my_page_videos
+      else
+        urls.each do |url|
+          Nico.new.get_video(url)
+        end
+      end
     end
-    @exist_files.uniq!
+  end
 
-    @l.info("open login page")
-    title = login
-    error_exit("login failed?(check mail and password)") if title == LOGIN_FAILED
+  class Nico
+    LOGIN_URL        = "https://secure.nicovideo.jp/secure/login_form"
+    VIDEOINFO_URL    = "http://ext.nicovideo.jp/api/getthumbinfo"
+    COMMENT_URL      = "http://flapi.nicovideo.jp/api/getflv"
+    THREAD_ID_URL    = "http://flapi.nicovideo.jp/api/getthreadkey"
 
-    @l.info("open my page")
-    my_top_link = @agent.page.link_with(:href => /#{MY_PAGE_TOP}/)
-    error_exit("not found my page link: #{MY_PAGE_TOP}") if my_top_link.nil?
-    @l.info{ "search link '#{DL_URL}' in #{MY_PAGE_TOP}" }
-    my_list = my_top_link.click
+    CONFIG           = YAML.load_file("_config.yml")
+    CORE             = Pit.get(CONFIG["pit_id"])
+    DL_PATH          = CONFIG["path"]
 
-    @l.info("get video title and link from #{MY_PAGE_TOP}")
-    check_mypage(my_list)
-    print "\n"
+    DL_URL           = "http://www.nicovideo.jp/watch/"
+    MY_PAGE_TOP      = "/my/top"
+    PAST_NICO_REPORT = "next-page-link"
+    GZIP_MAGICNUM    = ["1f8b"]
+    LOGIN_FAILED     = "Log into Niconico"
 
-    @l.info("get description, tags")
-    @l.info("================================")
-    @l.debug { "@dl_cores: \n#{@dl_cores}" }
-    @dl_cores.each do |dl|
-      sleep(10)
+    # not download smXXXXXXX
+    IGNORE_NUMBER    = "sm"
+    IGNORE_TITLE     = "\r\n\t\t\t\t\t\t\t\t"
 
-      dl = get_videoinfo(dl)
+    def initialize
+      @l = Logger.new(STDOUT)
+      @l.datetime_format ="%Y-%m-%dT%H:%M:%S "
+      @l.level = Logger::INFO
+
+      @agent = ""
+      @exist_files = []
+      @dl_cores    = []
+
+      FileUtils.mkdir_p(DL_PATH)
+      Dir.glob("#{DL_PATH}/*").each do |file|
+        @exist_files << File::basename(file, ".*")
+      end
+      @exist_files.uniq!
+
+      @l.info("open login page")
+      title = login
+      error_exit("login failed?(check mail and password)") if title == LOGIN_FAILED
+    end
+
+    def get_video(url)
+      @l.info{ "get a video url: #{url}" }
+      dl = get_video_title(url)
+
+      #sleep(10)
+
+      get_videoinfo(dl)
       download(dl)
       @l.info("================================")
     end
-  end
 
-  # return: login page's title
-  def login
-    @agent = Mechanize.new
-    login_page = @agent.get(LOGIN_URL)
-    login_form = login_page.forms.first
-    login_form["mail_tel"] = CORE["id"]
-    login_form["password"] = CORE["password"]
-    page = @agent.submit(login_form)
-    page.title
-  end
+    def get_my_page_videos
+      @l.info("open my page")
+      my_top_link = @agent.page.link_with(:href => /#{MY_PAGE_TOP}/)
+      error_exit("not found my page link: #{MY_PAGE_TOP}") if my_top_link.nil?
+      @l.info{ "search link '#{DL_URL}' in #{MY_PAGE_TOP}" }
+      my_list = my_top_link.click
 
-  def check_mypage(my_list)
-    my_list.links.each do |link|
-      url = link.node.values[0]
-      if url.match(/#{DL_URL}/) then
-        dl = {}
-        dl["title"]  = link.node.children.text
-        dl["url"]    = url
-        dl["number"] = $'
-        next if dl["title"]        == IGNORE_TITLE
-        next if dl["number"].include? IGNORE_NUMBER
-        @dl_cores << dl
-        print "\r#{@dl_cores.size} videos: #{dl["title"].bytesize}byte #{dl["title"]}"
-      elsif url.match(/#{PAST_NICO_REPORT}/) then
-        past_url = link.node.values[1]
-        check_mypage(@agent.get(past_url))
+      @l.info("get video title and link from #{MY_PAGE_TOP}")
+      check_mypage(my_list)
+      print "\n"
+
+      @l.info("get description, tags")
+      @l.info("================================")
+      @l.debug { "@dl_cores: \n#{@dl_cores}" }
+      @dl_cores.each do |dl|
+        sleep(10)
+
+        dl = get_videoinfo(dl)
+        download(dl)
+        @l.info("================================")
       end
     end
-  end
 
-  def get_videoinfo(dl)
-    res = @agent.get("#{VIDEOINFO_URL}/#{dl["number"]}")
-    res.xml.children.children.children.each do |child|
-      case child.name
-      when "description"
-        dl["description"] = child.content
-      when "tags"
-        tags = []
-        child.children.each do |c|
-          case c.name
-          when "tag"
-            tags << c.content
-          end
+    # return: login page's title
+    def login
+      @agent = Mechanize.new
+      login_page = @agent.get(LOGIN_URL)
+      login_form = login_page.forms.first
+      login_form["mail_tel"] = CORE["id"]
+      login_form["password"] = CORE["password"]
+      page = @agent.submit(login_form)
+      page.title
+    end
+
+    # get a video's information
+    # url: nico video url xxxxxxxxxx
+    # return: { "title" => video's title
+    #           "url"   => http://www.nicovideo.jp/watch/xxxxxxxxxx
+    #           "number"=> xxxxxxxxxx }
+    def get_video_title(url)
+      video_page = @agent.get("#{VIDEOINFO_URL}/#{url}")
+      dl = {}
+      dl["title"]  = video_page.xml.children.children.search("title").text
+      dl["url"]    = "#{DL_URL}#{url}"
+      dl["number"] = url
+      dl
+    end
+
+    def check_mypage(my_list)
+      my_list.links.each do |link|
+        url = link.node.values[0]
+        if url.match(/#{DL_URL}/) then
+          dl = {}
+          dl["title"]  = link.node.children.text
+          dl["url"]    = url
+          dl["number"] = $'
+          next if dl["title"]        == IGNORE_TITLE
+          next if dl["number"].include? IGNORE_NUMBER
+          @dl_cores << dl
+          print "\r#{@dl_cores.size} videos: #{dl["title"].bytesize}byte #{dl["title"]}"
+        elsif url.match(/#{PAST_NICO_REPORT}/) then
+          past_url = link.node.values[1]
+          check_mypage(@agent.get(past_url))
         end
-        dl["tags"] = tags
       end
     end
-    dl
-  end
 
-  def download(dl)
-    dl["title"] = dl["title"].gsub(/\//, "-")
-
-    begin
-      # check file bytesize
-      FileUtils.touch("#{DL_PATH}/#{dl["title"]}.html")
-    rescue Errno::ENAMETOOLONG => ex
-      @l.warn{ "\n#{ex}" }
-      dl["title"] = dl["title"][0, 50]
-      @l.warn{ "and TRUNCATE: #{dl["title"]}" }
-      retry
+    def get_videoinfo(dl)
+      res = @agent.get("#{VIDEOINFO_URL}/#{dl["number"]}")
+      res.xml.children.children.children.each do |child|
+        case child.name
+        when "description"
+          dl["description"] = child.content
+        when "tags"
+          tags = []
+          child.children.each do |c|
+            case c.name
+            when "tag"
+              tags << c.content
+            end
+          end
+          dl["tags"] = tags
+        end
+      end
+      dl
     end
 
-    @l.info{ "download target: #{dl["title"]}" }
-    params = {}
+    def download(dl)
+      dl["title"] = dl["title"].gsub(/\//, "-")
 
-    comment_url = "#{COMMENT_URL}/#{dl["number"]}"
-    params = get_params(comment_url)
-    @l.debug { "comment_url : #{comment_url}"}
-
-    return if param_nil?(params, "ms", "Pay video? or deleted?")
-    return if param_nil?(params, "url", "Pay video?")
-    message_server = URI.decode(params["ms"])
-    video_server   = URI.decode(params["url"])
-    thread_id      = params["thread_id"]
-    user_id        = params["user_id"]
-    minutes        = (params["l"].to_i / 60 ) + 1
-
-    thread_id_url = "#{THREAD_ID_URL}?thread=#{thread_id}"
-    params.merge!(get_params(thread_id_url))
-    @l.debug { "thread_id_url : #{thread_id_url}"}
-
-    return if param_nil?(params, "threadkey", "Pay video?")
-    thread_key = params["threadkey"]
-    force_184  = params["force_184"]
-
-    @l.info("title, tags, description write")
-    write(dl, "#{dl["title"]}.html")
-
-    xml = <<-EOH
-      <packet>
-        <thread thread="#{thread_id}" user_id="#{user_id}"
-          threadkey="#{thread_key}" force_184="#{force_184}"
-          scores="1" version="20090904" res_from="-1000"
-          with_global="1">
-        </thread>
-        <thread_leaves thread="#{thread_id}" user_id="#{user_id}"
-          threadkey="#{thread_key}" force_184="#{force_184}"
-          scores="1">
-            0-#{minutes}:100,1000
-        </thread_leaves>
-      </packet>
-    EOH
-    @l.debug { "xml: \n#{xml}"}
-
-    @l.info("comment get")
-    begin
-      @agent.content_encoding_hooks << lambda do |httpagent, uri, response, body_io|
-        response['content-encoding'] = nil
+      begin
+        # check file bytesize
+        FileUtils.touch("#{DL_PATH}/#{dl["title"]}.html")
+      rescue Errno::ENAMETOOLONG => ex
+        @l.warn{ "\n#{ex}" }
+        dl["title"] = dl["title"][0, 50]
+        @l.warn{ "and TRUNCATE: #{dl["title"]}" }
+        retry
       end
-      res = @agent.post_data(message_server, xml)
+
+      @l.info{ "download target: #{dl["title"]}" }
+      params = {}
+
+      comment_url = "#{COMMENT_URL}/#{dl["number"]}"
+      params = get_params(comment_url)
+      @l.debug { "comment_url : #{comment_url}"}
+
+      return if param_nil?(params, "ms", "Pay video? or deleted?")
+      return if param_nil?(params, "url", "Pay video?")
+      message_server = URI.decode(params["ms"])
+      video_server   = URI.decode(params["url"])
+      thread_id      = params["thread_id"]
+      user_id        = params["user_id"]
+      minutes        = (params["l"].to_i / 60 ) + 1
+
+      thread_id_url = "#{THREAD_ID_URL}?thread=#{thread_id}"
+      params.merge!(get_params(thread_id_url))
+      @l.debug { "thread_id_url : #{thread_id_url}"}
+
+      # skip error check when NOT official video(smxxxxxxx)
+      unless dl["number"].include? IGNORE_NUMBER
+        return if param_nil?(params, "threadkey", "Pay video?")
+      end
+      thread_key = params["threadkey"]
+      force_184  = params["force_184"]
+
+      @l.info("title, tags, description write")
+      write(dl, "#{dl["title"]}.html")
+
+      xml = <<-EOH
+        <packet>
+          <thread thread="#{thread_id}" user_id="#{user_id}"
+            threadkey="#{thread_key}" force_184="#{force_184}"
+            scores="1" version="20090904" res_from="-1000"
+            with_global="1">
+          </thread>
+          <thread_leaves thread="#{thread_id}" user_id="#{user_id}"
+            threadkey="#{thread_key}" force_184="#{force_184}"
+            scores="1">
+              0-#{minutes}:100,1000
+          </thread_leaves>
+        </packet>
+      EOH
+      @l.debug { "xml: \n#{xml}"}
+
+      @l.info("comment get")
+      begin
+        @agent.content_encoding_hooks << lambda do |httpagent, uri, response, body_io|
+          response['content-encoding'] = nil
+        end
+        res = @agent.post_data(message_server, xml)
+      rescue Net::HTTP::Persistent::Error => ex
+        @l.warn("\n#{ex}")
+        @l.warn("retry")
+        sleep(10)
+        retry
+      end
+
+      begin
+        # res.body: \x1F\x8B\.... => gzip
+        if StringIO.open(res.body).read(2).unpack("H*") == GZIP_MAGICNUM then
+          @l.debug("comment format: gzip")
+          content = StringIO.open(res.body, "rb") { |r| Zlib::GzipReader.wrap(r).read }
+        else
+          @l.debug("comment format: xml")
+          content = res.body
+        end
+        write(content, "#{dl["title"]}.xml")
+      rescue Zlib::GzipFile::Error => ex
+        @l.error("\n#{ex}")
+        @l.debug("res.body: \n#{res.body}")
+        return
+      end
+
+      @l.info("download start")
+      if @exist_files.include?(dl["title"]) then
+        @l.info("SKIP: video already exist")
+        return
+      end
+
+      @agent.get(dl["url"])
+      @agent.download(video_server, "#{DL_PATH}/#{dl["title"]}.mp4")
+      @l.info("complete")
+    end
+
+  private
+    def write(file, title, mode="w")
+      @l.info{ "#{title}" }
+      open("#{DL_PATH}/#{title}", mode) { |x| x.write(file) }
+      @l.info("success")
+    end
+
+    def param_nil?(params, key, warn_message)
+      if params[key].nil? then
+        @l.warn("SKIP: #{key} not found (#{warn_message})")
+        sleep(10)
+        true
+      else
+        false
+      end
+    end
+
+    def get_params(url)
+      params = {}
+      res = @agent.get(url)
+      res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
+      @l.debug { "response: \n#{res.body}"}
+      params
     rescue Net::HTTP::Persistent::Error => ex
+      @l.warn("get_params")
       @l.warn("\n#{ex}")
       @l.warn("retry")
       sleep(10)
       retry
     end
 
-    begin
-      # res.body: \x1F\x8B\.... => gzip
-      if StringIO.open(res.body).read(2).unpack("H*") == GZIP_MAGICNUM then
-        @l.debug("comment format: gzip")
-        content = StringIO.open(res.body, "rb") { |r| Zlib::GzipReader.wrap(r).read }
-      else
-        @l.debug("comment format: xml")
-        content = res.body
-      end
-      write(content, "#{dl["title"]}.xml")
-    rescue Zlib::GzipFile::Error => ex
-      @l.error("\n#{ex}")
-      @l.debug("res.body: \n#{res.body}")
-      return
+    def error_exit(message)
+      @l.error { "#{message} ... exit" }
+      exit 1
     end
-
-    @l.info("download start")
-    if @exist_files.include?(dl["title"]) then
-      @l.info("SKIP: video already exist")
-      return
-    end
-
-    @agent.get(dl["url"])
-    @agent.download(video_server, "#{DL_PATH}/#{dl["title"]}.mp4")
-    @l.info("complete")
-  end
-
-private
-  def write(file, title, mode="w")
-    @l.info{ "#{title}" }
-    open("#{DL_PATH}/#{title}", mode) { |x| x.write(file) }
-    @l.info("success")
-  end
-
-  def param_nil?(params, key, warn_message)
-    if params[key].nil? then
-      @l.warn("SKIP: #{key} not found (#{warn_message})")
-      sleep(10)
-      true
-    else
-      false
-    end
-  end
-
-  def get_params(url)
-    params = {}
-    res = @agent.get(url)
-    res.body.split("&").map { |r| k,v = r.split("="); params[k] = v }
-    @l.debug { "response: \n#{res.body}"}
-    params
-  rescue Net::HTTP::Persistent::Error => ex
-    @l.warn("get_params")
-    @l.warn("\n#{ex}")
-    @l.warn("retry")
-    sleep(10)
-    retry
-  end
-
-  def error_exit(message)
-    @l.error { "#{message} ... exit" }
-    exit 1
   end
 end
-
-NicoCui::gets
