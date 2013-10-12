@@ -299,7 +299,19 @@ module NicoCui
         return
       end
 
-      @agent.get(dl["url"])
+      begin
+        @agent.get(dl["url"])
+      rescue Mechanize::ResponseCodeError => ex
+        if ex.response_code == "403"
+          @l.warn("\n#{ex}")
+          @l.warn("SKIP: video deleted?")
+        else
+          @l.error("\n#{ex}")
+          @l.error("EXIT: unknown error")
+          exit 1
+        end
+        return
+      end
       @agent.download(video_server, "#{DL_PATH}/#{dl["title"]}.mp4")
       @l.info("complete")
     end
