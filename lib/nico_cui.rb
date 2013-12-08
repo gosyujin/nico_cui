@@ -226,10 +226,8 @@ module NicoCui
       params = get_params(comment_url)
       @l.debug { "comment_url : #{comment_url}"}
 
-      return if param_nil?(params, "ms", "Pay video? or deleted?")
-      return if param_nil?(params, "url", "Pay video?")
-      message_server = URI.decode(params["ms"])
-      video_server   = URI.decode(params["url"])
+      message_server = params["ms"].nil? ? nil : URI.decode(params["ms"])
+      video_server   = params["url"].nil? ? nil : URI.decode(params["url"])
       thread_id      = params["thread_id"]
       user_id        = params["user_id"]
       minutes        = (params["l"].to_i / 60 ) + 1
@@ -265,6 +263,7 @@ module NicoCui
       @l.debug { "xml: \n#{xml}"}
 
       @l.info("comment get")
+      return if param_nil?(params, "ms", "Pay video? or deleted?")
       begin
         @agent.content_encoding_hooks << lambda do |httpagent, uri, response, body_io|
           response['content-encoding'] = nil
@@ -294,6 +293,7 @@ module NicoCui
       end
 
       @l.info("download start")
+      return if param_nil?(params, "url", "Pay video?")
       if @exist_files.include?(dl["title"]) then
         @l.info("SKIP: video already exist")
         return
