@@ -13,29 +13,33 @@ require 'pp'
 # override Mechanize
 class Mechanize
   def post_data(uri, data, query = {}, headers = {})
-    return request_with_entity(:post, uri, query, headers) if String === query
-
+    if query.is_a?(String)
+      return request_with_entity(:post, uri, query, headers)
+    end
     node = {}
     # Create a fake form
     class << node
-      def search(*args); []; end
+      def search(*args)
+        []
+      end
     end
     node['method'] = 'POST'
-    #node['enctype'] = 'application/x-www-form-urlencoded'
+    # node['enctype'] = 'application/x-www-form-urlencoded'
     node['enctype'] = 'text/xml'
 
     form = Form.new(node)
 
-    query.each { |k, v|
+    query.each do |k, v|
       if v.is_a?(IO)
         form.enctype = 'multipart/form-data'
-        ul = Form::FileUpload.new({'name' => k.to_s},::File.basename(v.path))
+        ul = Form::FileUpload.new(
+          { 'name' => k.to_s }, ::File.basename(v.path))
         ul.file_data = v.read
         form.file_uploads << ul
       else
-        form.fields << Form::Field.new({'name' => k.to_s},v)
+        form.fields << Form::Field.new({ 'name' => k.to_s }, v)
       end
-    }
+    end
 
     cur_page = form.page || current_page || Page.new
     request_data = data
