@@ -6,3 +6,7 @@ gemspec
 gem 'pit'
 gem 'mechanize'
 gem 'thor'
+
+group :development do
+  gem 'rubocop'
+end
