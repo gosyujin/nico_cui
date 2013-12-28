@@ -60,15 +60,15 @@ module NicoCui
   # Thor commands
   class CLI < Thor
     class_option :help, aliases: '-h', type: :boolean,
-      desc: 'help'
+                        desc: 'help'
 
     desc 'download [-a] video_number',
          'default'
     method_option :all, aliases: '-a', type: :boolean,
-      desc: "download mypage's(nico repo) all official videos"
+                        desc: "download mypage's all official videos"
     def download(*urls)
-      if options[:all] then
-        Nico.new.get_my_page_videos
+      if options[:all]
+        Nico.new.my_page_videos
       else
         urls.each do |url|
           Nico.new.get_video(url)
@@ -129,9 +129,9 @@ module NicoCui
       @l.info('================================')
     end
 
-    def get_my_page_videos
-      @l.info("open my page")
-      my_top_link = @agent.page.link_with(:href => /#{MY_PAGE_TOP}/)
+    def my_page_videos
+      @l.info('open my page')
+      my_top_link = @agent.page.link_with(href: /#{MY_PAGE_TOP}/)
       error_exit("not found my page link: #{MY_PAGE_TOP}") if my_top_link.nil?
       @l.info { "search link '#{DL_URL}' in #{MY_PAGE_TOP}" }
       my_list = my_top_link.click
@@ -188,7 +188,8 @@ module NicoCui
           next if dl['title']        == IGNORE_TITLE
           next if dl['number'].include? IGNORE_NUMBER
           @dl_cores << dl
-          print "\r#{@dl_cores.size} videos: #{dl['title'].bytesize}byte #{dl['title']}"
+          print "\r#{@dl_cores.size} videos: " \
+                "#{dl['title'].bytesize}byte #{dl['title']}"
         elsif url.match(/#{PAST_NICO_REPORT}/) then
           past_url = link.node.values[1]
           check_mypage(@agent.get(past_url))
@@ -230,7 +231,6 @@ module NicoCui
       end
 
       @l.info { "download target: #{dl["title"]}" }
-      params = {}
 
       comment_url = "#{COMMENT_URL}/#{dl["number"]}"
       params = get_params(comment_url)
@@ -290,7 +290,9 @@ module NicoCui
         # res.body: \x1F\x8B\.... => gzip
         if StringIO.open(res.body).read(2).unpack('H*') == GZIP_MAGICNUM
           @l.debug('comment format: gzip')
-          content = StringIO.open(res.body, 'rb') { |r| Zlib::GzipReader.wrap(r).read }
+          content = StringIO.open(res.body, 'rb') do |r|
+            Zlib::GzipReader.wrap(r).read
+          end
         else
           @l.debug('comment format: xml')
           content = res.body
@@ -347,7 +349,10 @@ module NicoCui
     def get_params(url)
       params = {}
       res = @agent.get(url)
-      res.body.split('&').map { |r| k, v = r.split('='); params[k] = v }
+      res.body.split('&').map do |r|
+        k, v = r.split('=')
+        params[k] = v
+      end
       @l.debug { "response: \n#{res.body}" }
       params
     rescue Net::HTTP::Persistent::Error => ex
