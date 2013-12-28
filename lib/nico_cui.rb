@@ -55,11 +55,13 @@ end
 module NicoCui
   # Thor commands
   class CLI < Thor
-    class_option :help, aliases: '-h', type: :boolean, desc: 'help'
+    class_option :help, aliases: '-h', type: :boolean,
+      desc: 'help'
 
     desc 'download [-a] video_number',
          'default'
-    method_option :all, aliases: '-a', type: :boolean, desc: "download mypage's(nico repo) all official videos"
+    method_option :all, aliases: '-a', type: :boolean,
+      desc: "download mypage's(nico repo) all official videos"
     def download(*urls)
       if options[:all] then
         Nico.new.get_my_page_videos
@@ -109,14 +111,14 @@ module NicoCui
 
       @l.info('open login page')
       title = login
-      error_exit('login failed?(check mail and password)') if title == LOGIN_FAILED
+      if title == LOGIN_FAILED
+        error_exit('login failed?(check mail and password)')
+      end
     end
 
     def get_video(url)
       @l.info { "get a video url: #{url}" }
       dl = get_video_title(url)
-
-      # sleep(10)
 
       get_videoinfo(dl)
       download(dl)
