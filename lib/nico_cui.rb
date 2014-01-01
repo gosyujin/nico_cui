@@ -70,13 +70,11 @@ module NicoCui
                         desc: "download mypage's official videos interactive"
     def download(*urls)
       if options[:all]
-        Nico.new.my_page_videos
+        Nico.new.get_video
       elsif options[:interactive]
 
       else
-        urls.each do |url|
-          Nico.new.get_video(url)
-        end
+        Nico.new.get_video(urls)
       end
     end
   end
@@ -126,25 +124,24 @@ module NicoCui
       end
     end
 
-    def get_video(url)
-      @l.info { "get a video url: #{url}" }
-      dl = get_video_title(url)
+    def get_video(urls=nil)
+      if urls.nil?
+        @l.info("open my page")
+        my_top_link = @agent.page.link_with(href: /#{MY_PAGE_TOP}/)
+        error_exit("not found my page link: #{MY_PAGE_TOP}") if my_top_link.nil?
 
-      get_videoinfo(dl)
-      download(dl)
-      @l.info('================================')
-    end
+        @l.info { "search link '#{DL_URL}' in #{MY_PAGE_TOP}" }
+        my_list = my_top_link.click
 
-    def my_page_videos
-      @l.info('open my page')
-      my_top_link = @agent.page.link_with(href: /#{MY_PAGE_TOP}/)
-      error_exit("not found my page link: #{MY_PAGE_TOP}") if my_top_link.nil?
-      @l.info { "search link '#{DL_URL}' in #{MY_PAGE_TOP}" }
-      my_list = my_top_link.click
-
-      @l.info("get video title and link from #{MY_PAGE_TOP}")
-      check_mypage(my_list)
+        @l.info("get video title and link from #{MY_PAGE_TOP}")
+        @dl_cores = find_mypage(my_list)
+      else
+        @l.info { "open url: #{urls}" }
+        @dl_cores = get_videotitle(urls)
+      end
       print "\n"
+
+      pp @dl_cores
 
       @l.info('get description, tags')
       @l.info('================================')
@@ -174,17 +171,24 @@ module NicoCui
     # return: { "title" => video's title
     #           "url"   => http://www.nicovideo.jp/watch/xxxxxxxxxx
     #           "number"=> xxxxxxxxxx }
-    def get_video_title(url)
-      video_page = @agent.get("#{VIDEOINFO_URL}/#{url}")
-      dl = {}
-      dl['title']  = video_page.xml.children.children.search('title').text
-      dl['url']    = "#{DL_URL}#{url}"
-      dl['number'] = url
-      dl
+    def get_videotitle(urls)
+      dl_cores = []
+      urls.each do |url|
+        video_page = @agent.get("#{VIDEOINFO_URL}/#{url}")
+        dl = {}
+        dl['title']  = video_page.xml.children.children.search('title').text
+        dl['url']    = "#{DL_URL}#{url}"
+        dl['number'] = url
+        dl_cores << dl
+        print "\r#{dl_cores.size} videos: " \
+              "#{dl['title'].bytesize}byte #{dl['title']}"
+      end
+      dl_cores
     end
 
-    def check_mypage(my_list)
-      my_list.links.each do |link|
+    def find_mypage(pages, dl_cores=nil)
+      dl_cores = [] if dl_cores.nil?
+      pages.links.each do |link|
         url = link.node.values[0]
         if url.match(/#{DL_URL}/)
           dl = {}
@@ -193,14 +197,15 @@ module NicoCui
           dl['number'] = $'
           next if dl['title']        == IGNORE_TITLE
           next if dl['number'].include? IGNORE_NUMBER
-          @dl_cores << dl
-          print "\r#{@dl_cores.size} videos: " \
+          dl_cores << dl
+          print "\r#{dl_cores.size} videos: " \
                 "#{dl['title'].bytesize}byte #{dl['title']}"
         elsif url.match(/#{PAST_NICO_REPORT}/) then
           past_url = link.node.values[1]
-          check_mypage(@agent.get(past_url))
+          find_mypage(@agent.get(past_url), dl_cores)
         end
       end
+      dl_cores
     end
 
     def get_videoinfo(dl)
