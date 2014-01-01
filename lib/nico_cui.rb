@@ -66,9 +66,13 @@ module NicoCui
          'default'
     method_option :all, aliases: '-a', type: :boolean,
                         desc: "download mypage's all official videos"
+    method_option :interactive, aliases: '-i', type: :boolean,
+                        desc: "download mypage's official videos interactive"
     def download(*urls)
       if options[:all]
         Nico.new.my_page_videos
+      elsif options[:interactive]
+
       else
         urls.each do |url|
           Nico.new.get_video(url)
@@ -98,6 +102,7 @@ module NicoCui
     IGNORE_NUMBER    = 'sm'
     IGNORE_TITLE     = "\r\n\t\t\t\t\t\t\t\t"
 
+    # initalize and login
     def initialize
       @l = Logger.new(STDOUT)
       @l.datetime_format = '%Y-%m-%dT%H:%M:%S '
@@ -107,6 +112,7 @@ module NicoCui
       @exist_files = []
       @dl_cores    = []
 
+      @l.info { "download path: #{DL_PATH}" }
       FileUtils.mkdir_p(DL_PATH)
       Dir.glob("#{DL_PATH}/*").each do |file|
         @exist_files << File.basename(file, '.*')
