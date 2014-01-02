@@ -68,9 +68,9 @@ module NicoCui
     method_option :all, aliases: '-a', type: :boolean,
                         desc: "download mypage's all official videos"
     method_option :mylist, aliases: '-m', type: :boolean,
-                        desc: "download mypage's official videos interactive"
+                           desc: "download mypage's official videos interactive"
     method_option :interactive, aliases: '-i', type: :boolean,
-                        desc: "download mypage's official videos interactive"
+                                desc: "download mypage's official videos interactive"
     def download(*urls)
       if options[:all]
         Nico.new.get_video(:all)
@@ -140,10 +140,10 @@ module NicoCui
       page.title
     end
 
-    def get_video(type, urls=nil)
+    def get_video(type, urls = nil)
       case type
       when :all
-        @l.info("open my page")
+        @l.info('open my page')
         my_top_link = @agent.page.link_with(href: /#{MY_PAGE_TOP}/)
         error_exit("not found my page link: #{MY_PAGE_TOP}") if my_top_link.nil?
 
@@ -179,7 +179,7 @@ module NicoCui
       end
     end
 
-    def find_mypage(pages, dl_cores=nil)
+    def find_mypage(pages, dl_cores = nil)
       dl_cores = [] if dl_cores.nil?
       pages.links.each do |link|
         url = link.node.values[0]
