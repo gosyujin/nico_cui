@@ -2,6 +2,7 @@
 require 'nico_cui/version'
 require 'thor'
 require 'mechanize'
+require 'nokogiri'
 require 'pit'
 require 'net/http'
 require 'zlib'
@@ -66,15 +67,18 @@ module NicoCui
          'default'
     method_option :all, aliases: '-a', type: :boolean,
                         desc: "download mypage's all official videos"
+    method_option :mylist, aliases: '-m', type: :boolean,
+                        desc: "download mypage's official videos interactive"
     method_option :interactive, aliases: '-i', type: :boolean,
                         desc: "download mypage's official videos interactive"
     def download(*urls)
       if options[:all]
-        Nico.new.get_video
+        Nico.new.get_video(:all)
       elsif options[:interactive]
-
+      elsif options[:mylist]
+        Nico.new.get_video(:mylist, urls)
       else
-        Nico.new.get_video(urls)
+        Nico.new.get_video(:video, urls)
       end
     end
   end
@@ -91,6 +95,7 @@ module NicoCui
     DL_PATH          = CONFIG['path']
 
     DL_URL           = 'http://www.nicovideo.jp/watch/'
+    MY_LIST_URL      = 'http://www.nicovideo.jp/mylist/'
     MY_PAGE_TOP      = '/my/top'
     PAST_NICO_REPORT = 'next-page-link'
     GZIP_MAGICNUM    = ['1f8b']
@@ -124,8 +129,20 @@ module NicoCui
       end
     end
 
-    def get_video(urls=nil)
-      if urls.nil?
+    # return: login page's title
+    def login
+      @agent = Mechanize.new
+      login_page = @agent.get(LOGIN_URL)
+      login_form = login_page.forms.first
+      login_form['mail_tel'] = CORE['id']
+      login_form['password'] = CORE['password']
+      page = @agent.submit(login_form)
+      page.title
+    end
+
+    def get_video(type, urls=nil)
+      case type
+      when :all
         @l.info("open my page")
         my_top_link = @agent.page.link_with(href: /#{MY_PAGE_TOP}/)
         error_exit("not found my page link: #{MY_PAGE_TOP}") if my_top_link.nil?
@@ -135,13 +152,20 @@ module NicoCui
 
         @l.info("get video title and link from #{MY_PAGE_TOP}")
         @dl_cores = find_mypage(my_list)
-      else
+      when :mylist
+        @l.info { "open mylist: #{urls}" }
+        rss = @agent.get("#{MY_LIST_URL}/#{urls[0]}?rss=2.0")
+        doc = Nokogiri::XML(rss.body)
+        urls = []
+        doc.xpath('/rss/channel/item').each do |item|
+          urls << File.basename(item.xpath('./link').text)
+        end
+        @dl_cores = get_videotitle(urls)
+      when :video
         @l.info { "open url: #{urls}" }
         @dl_cores = get_videotitle(urls)
       end
       print "\n"
-
-      pp @dl_cores
 
       @l.info('get description, tags')
       @l.info('================================')
@@ -155,15 +179,26 @@ module NicoCui
       end
     end
 
-    # return: login page's title
-    def login
-      @agent = Mechanize.new
-      login_page = @agent.get(LOGIN_URL)
-      login_form = login_page.forms.first
-      login_form['mail_tel'] = CORE['id']
-      login_form['password'] = CORE['password']
-      page = @agent.submit(login_form)
-      page.title
+    def find_mypage(pages, dl_cores=nil)
+      dl_cores = [] if dl_cores.nil?
+      pages.links.each do |link|
+        url = link.node.values[0]
+        if url.match(/#{DL_URL}/)
+          dl = {}
+          dl['title']  = link.node.children.text
+          dl['url']    = url
+          dl['number'] = $'
+          next if dl['title']        == IGNORE_TITLE
+#          next if dl['number'].include? IGNORE_NUMBER
+          dl_cores << dl
+          print "\r#{dl_cores.size} videos: " \
+                "#{dl['title'].bytesize}byte #{dl['title']}"
+        elsif url.match(/#{PAST_NICO_REPORT}/) then
+          past_url = link.node.values[1]
+          find_mypage(@agent.get(past_url), dl_cores)
+        end
+      end
+      dl_cores
     end
 
     # get a video's information
@@ -186,28 +221,7 @@ module NicoCui
       dl_cores
     end
 
-    def find_mypage(pages, dl_cores=nil)
-      dl_cores = [] if dl_cores.nil?
-      pages.links.each do |link|
-        url = link.node.values[0]
-        if url.match(/#{DL_URL}/)
-          dl = {}
-          dl['title']  = link.node.children.text
-          dl['url']    = url
-          dl['number'] = $'
-          next if dl['title']        == IGNORE_TITLE
-          next if dl['number'].include? IGNORE_NUMBER
-          dl_cores << dl
-          print "\r#{dl_cores.size} videos: " \
-                "#{dl['title'].bytesize}byte #{dl['title']}"
-        elsif url.match(/#{PAST_NICO_REPORT}/) then
-          past_url = link.node.values[1]
-          find_mypage(@agent.get(past_url), dl_cores)
-        end
-      end
-      dl_cores
-    end
-
+    # get a video's description and tags
     def get_videoinfo(dl)
       res = @agent.get("#{VIDEOINFO_URL}/#{dl['number']}")
       res.xml.children.children.children.each do |child|
@@ -324,19 +338,23 @@ module NicoCui
 
       begin
         @agent.get(dl['url'])
+        @agent.download(video_server, "#{DL_PATH}/#{dl["title"]}.mp4")
+        @l.info('success')
       rescue Mechanize::ResponseCodeError => ex
         if ex.response_code == '403'
           @l.warn("\n#{ex}")
           @l.warn('SKIP: video deleted?')
+          return
+        elsif ex.response_code == '504'
+          @l.error("\n#{ex}")
+          @l.error('EXIT: timeout and retry')
+          exit 1
         else
           @l.error("\n#{ex}")
           @l.error('EXIT: unknown error')
           exit 1
         end
-        return
       end
-      @agent.download(video_server, "#{DL_PATH}/#{dl["title"]}.mp4")
-      @l.info('complete')
     end
 
     private
