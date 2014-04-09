@@ -132,6 +132,7 @@ module NicoCui
     # return: login page's title
     def login
       @agent = Mechanize.new
+      @agent.ssl_version = 'TLSv1'
       login_page = @agent.get(LOGIN_URL)
       login_form = login_page.forms.first
       login_form['mail_tel'] = CORE['id']
